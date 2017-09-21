@@ -44,7 +44,7 @@ class DaikinAirconAccessory {
      */
     sendGetRequest(path, callback, useCache = true) {
         const now = +new Date();
-        if (this.lastupdate[path] !== undefined && this.lastupdate[path].time > now - 60000) {
+        if (useCache && this.lastupdate[path] !== undefined && this.lastupdate[path].time > now - 60000) {
             callback(this.lastupdate[path].body);
         } else {
             const req = http.get(
@@ -95,7 +95,7 @@ class DaikinAirconAccessory {
             this.sendGetRequest('/aircon/set_control_info?' + query, (response) => {
                 callback();
             }, false);
-        });
+        }, false);
     }
 	
     /**
@@ -137,10 +137,9 @@ class DaikinAirconAccessory {
             let status = Characteristic.TargetHeaterCoolerState.INACTIVE;
             if (responseValues.pow == '1') {
                 switch (responseValues.mode) {
-                    case '0': // 自動
-                    case '1': // 加湿
+                    case '1': // 自動
                     case '2': // 除湿
-                        status = Characteristic.TargetHeaterCoolerState.AUTO;
+                    status = Characteristic.TargetHeaterCoolerState.AUTO;
                         break;
                     case '3': // 冷房
                         status = Characteristic.TargetHeaterCoolerState.COOL;
@@ -151,6 +150,7 @@ class DaikinAirconAccessory {
                     case '6': // 送風
                         status = Characteristic.TargetHeaterCoolerState.AUTO;
                         break;
+                    case 'HUM': // 加湿
                     default:
                         status = Characteristic.TargetHeaterCoolerState.AUTO;
                 }
@@ -171,7 +171,7 @@ class DaikinAirconAccessory {
             let mode = currentValues.mode;
             switch (state) {
                 case Characteristic.TargetHeaterCoolerState.AUTO:
-                    mode = 0;
+                    mode = 1;
                     break;
                 case Characteristic.TargetHeaterCoolerState.COOL:
                     mode = 3;
@@ -183,7 +183,9 @@ class DaikinAirconAccessory {
                     break;
             }
 
-            const query = body.replace(/,/g, '&').replace(/mode=[01]/, `mode=${mode}`);
+            const query = body
+                .replace(/,/g, '&').replace(/pow=[01]/, 'pow=1')
+                .replace(/,/g, '&').replace(/mode=[01]/, `mode=${mode}`);
             this.sendGetRequest('/aircon/set_control_info?' + query, (response) => {
                 callback();
             }, false);
@@ -202,13 +204,17 @@ class DaikinAirconAccessory {
     }
     
     /**
-     * 冷房の設定温度を取得する
+     * 冷暖房の設定温度を取得する
      * @param {function} callback - コールバック
      */
-	getCoolingTemperature(callback) {
+	getThresholdTemperature(callback) {
 		this.sendGetRequest('/aircon/get_control_info', (body) => {
             const responseValues = this.parseResponse(body)
-            callback(null, responseValues.stemp);
+            if (responseValues.stemp && /^[0-9]+$/.test(responseValues.stemp)) {
+                callback(null, responseValues.stemp);
+            } else {
+                callback(null, 0);
+            }
         });
     }
 
@@ -223,6 +229,8 @@ class DaikinAirconAccessory {
             const currentValues = this.parseResponse(body);
             const query = body
                 .replace(/,/g, '&')
+                .replace(/,/g, '&').replace(/pow=[01]/, 'pow=1')
+                .replace(/,/g, '&').replace(/mode=[01]/, 'mode=3')
                 .replace(/stemp=[0-9.]+/, `stemp=${temp}`)
                 .replace(/dt3=[0-9.]+/, `dt3=${temp}`);
             this.sendGetRequest('/aircon/set_control_info?' + query, (response) => {
@@ -230,17 +238,6 @@ class DaikinAirconAccessory {
             }, false);
         });
 	}
-
-    /**
-     * 暖房の設定温度を取得する
-     * @param {function} callback - コールバック
-     */
-	getHeatingTemperature(callback) {
-		this.sendGetRequest('/aircon/get_control_info', (body) => {
-            const responseValues = this.parseResponse(body)
-            callback(null, responseValues.stemp);
-        });
-    }
 
     /**
      * 暖房の温度を設定する
@@ -253,12 +250,14 @@ class DaikinAirconAccessory {
             const currentValues = this.parseResponse(body);
             const query = body
                 .replace(/,/g, '&')
+                .replace(/,/g, '&').replace(/pow=[01]/, 'pow=1')
+                .replace(/,/g, '&').replace(/mode=[01]/, 'mode=4')
                 .replace(/stemp=[0-9.]+/, `stemp=${temp}`)
-                .replace(/dt3=[0-9.]+/, `dt3=${temp}`);
+                .replace(/dt4=[0-9.]+/, `dt4=${temp}`);
             this.sendGetRequest('/aircon/set_control_info?' + query, (response) => {
                 callback();
             }, false);
-        });
+        }, false);
     }
 
     /**
@@ -297,13 +296,23 @@ class DaikinAirconAccessory {
             .on('get', this.getCurrentTemperature.bind(this));
             
         heaterCoolerService
-			.getCharacteristic(Characteristic.CoolingThresholdTemperature)
-            .on('get', this.getCoolingTemperature.bind(this))
+            .getCharacteristic(Characteristic.CoolingThresholdTemperature)
+            .setProps({
+                maxValue: 32,
+                minValue: 18,
+                minStep: 1
+            })
+            .on('get', this.getThresholdTemperature.bind(this))
             .on('set', this.setCoolingTemperature.bind(this));
 
         heaterCoolerService
             .getCharacteristic(Characteristic.HeatingThresholdTemperature)
-            .on('get', this.getHeatingTemperature.bind(this))
+            .setProps({
+                maxValue: 30,
+                minValue: 15,
+                minStep: 1
+            })
+            .on('get', this.getThresholdTemperature.bind(this))
             .on('set', this.setHeatingTemperature.bind(this));
 
         const humiditySensorService = new Service.HumiditySensor(this.name + '（湿度）')
