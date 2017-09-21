@@ -11,6 +11,12 @@ AN80TRPとBRP072A41の組み合わせで動作確認しています。
 
 屋外の気温を取得したい場合はhomebridge-daikin-aircon-outdoorをご利用ください。
 
+## インストール
+
+```
+npm install -g homebridge-daikin-aircon
+```
+
 ## 設定
 
 ```
